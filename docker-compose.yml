@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: vuln_user
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: vuln_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --reload --port 8000
+
+  worker:
+    build: .
+    env_file:
+      - .env
+    environment:
+      # Explicitly override the async URL with the sync URL for Celery
+      - DATABASE_URL=postgresql+psycopg2://vuln_user:securepassword@db:5432/vuln_db
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    command: celery -A app.tasks worker --loglevel=info
+
+volumes:
+  postgres_data:
