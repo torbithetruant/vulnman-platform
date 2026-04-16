@@ -79,3 +79,20 @@ class Vulnerability(Base):
     
     # Relationship
     scan = relationship("Scan", back_populates="vulnerabilities")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    vuln_id = Column(Integer, ForeignKey("vulnerabilities.id"), nullable=False, index=True)
+    
+    # The Change
+    old_status = Column(SQLEnum(VulnStatus), nullable=False)
+    new_status = Column(SQLEnum(VulnStatus), nullable=False)
+    
+    # The Actor (Who did it?)
+    changed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

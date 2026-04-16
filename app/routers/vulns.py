@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 
 from app.database import get_db
-from app.models import Vulnerability, SeverityLevel, VulnStatus, Scan
-from sqlalchemy.orm import selectinload
+from app.deps import get_current_active_user
+from app.models import Vulnerability, SeverityLevel, VulnStatus, Scan, User, AuditLog
+from app.schemas import AuditLogResponse # IMPORT THE NEW SCHEMA
 
 router = APIRouter(prefix="/vulnerabilities", tags=["vulnerabilities"])
 
@@ -25,34 +26,27 @@ class VulnerabilityResponse(BaseModel):
     calculated_risk: Optional[float]
     status: VulnStatus
     affected_package: Optional[str]
-    repository: Optional[str] = None # We will alias this in the query
+    repository: Optional[str] = None
 
 @router.get("/", response_model=List[VulnerabilityResponse])
 async def list_vulnerabilities(
     severity: Optional[SeverityLevel] = None,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
-    # 1. Start with a clean base query
     query = (
-        select(
-            Vulnerability,
-            Scan.repository.label("repository")
-        )
+        select(Vulnerability, Scan.repository.label("repository"))
         .join(Scan, Vulnerability.scan_id == Scan.id)
     )
     
-    # 2. Safely apply the filter ONLY if severity is provided
     if severity:
         query = query.where(Vulnerability.severity == severity)
         
-    # 3. Now it's safe to chain ordering and pagination
     query = query.order_by(Vulnerability.calculated_risk.desc()).offset(offset).limit(limit)
-    
     result = await db.execute(query)
     
-    # 4. Map the tuple result back to our schema
     vulns = []
     for row in result.all():
         vuln = row[0]
@@ -65,7 +59,8 @@ async def list_vulnerabilities(
 async def update_vulnerability(
     vuln_id: int,
     update_data: VulnerabilityUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     query = (
         select(Vulnerability, Scan.repository.label("repository"))
@@ -78,12 +73,45 @@ async def update_vulnerability(
     if not row:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
     
+    # 1. EXTRACT VULN FIRST
     vuln = row[0]
-    vuln.status = update_data.status
-    vuln.repository = row[1]
     
+    # 2. SENIOR TOUCH: Prevent no-op updates (Don't log an audit if status didn't change)
+    if vuln.status == update_data.status:
+        raise HTTPException(status_code=400, detail="Vulnerability already has this status")
+    
+    # 3. NOW we can safely create the Audit Log
+    audit_entry = AuditLog(
+        vuln_id=vuln.id,
+        changed_by_user_id=current_user.id,
+        old_status=vuln.status,
+        new_status=update_data.status
+    )
+    db.add(audit_entry)
+
+    # 4. Update the actual vulnerability
+    vuln.status = update_data.status
+
     await db.commit()
     await db.refresh(vuln)
-    vuln.repository = row[1] # Ensure it persists after refresh if not mapped
+    vuln.repository = row[1] 
     
     return vuln
+
+@router.get("/{vuln_id}/history", response_model=List[AuditLogResponse]) # USE PYDANTIC SCHEMA
+async def get_vulnerability_history(
+    vuln_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    query = (
+        select(AuditLog)
+        .where(AuditLog.vuln_id == vuln_id)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    return result.scalars().all()

@@ -10,9 +10,11 @@ dependencies = [
     "alembic",
     "pydantic-settings",
     "pydantic",
+    "pydantic[email]",
     "celery",
     "redis",
     "python-jose[cryptography]",
+    "bcrypt<4.1.0",
     "passlib[bcrypt]",
     "python-multipart",
     "structlog",
@@ -27,3 +29,7 @@ dev = [
     "ruff",
     "mypy",
 ]
+
+# ADD THIS BLOCK BELOW:
+[tool.setuptools.packages.find]
+include = ["app*"]

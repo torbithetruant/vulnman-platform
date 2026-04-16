@@ -45,6 +45,9 @@ async def ingest_scan(
     # CRITICAL: Read raw body for signature verification
     raw_body = await request.body()
     verify_webhook_signature(request, raw_body)
+
+    # Parse AFTER verification
+    payload = WebhookPayload.model_validate_json(raw_body)
     
     logger.info("scan_ingested_securely", tool=payload.tool, repo=payload.repository)
     

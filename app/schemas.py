@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, validator
 from datetime import datetime
 from app.models import VulnStatus, SeverityLevel
 from typing import Optional
@@ -30,3 +30,13 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_active: bool
+
+class AuditLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    vuln_id: int
+    old_status: VulnStatus
+    new_status: VulnStatus
+    changed_by_user_id: int
+    created_at: datetime
